@@ -1,0 +1,91 @@
+https://github.com/tekartik/sqflite/issues/169
+
+
+
+import 'package:flutter/material.dart';
+import 'dart:async';
+import 'dart:isolate';
+import 'package:flutter_isolate/flutter_isolate.dart';
+import 'package:path/path.dart';
+import 'package:sqflite/sqflite.dart';
+
+void main() {
+  runApp(MyApp());
+  _createDBIsolate().then((_) {
+    print("sending message to db isolate");
+    _dbSendPort.send("message from main");
+  });
+}
+
+class MyApp extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'Flutter Demo',
+      theme: ThemeData(
+        primarySwatch: Colors.blue,
+      ),
+      home: Text(""),
+    );
+  }
+}
+
+SendPort _dbSendPort;
+FlutterIsolate _dbIsolate;
+
+Future<void> _createDBIsolate() async {
+
+  if (_dbIsolate != null) {
+    return;
+  }
+
+  ReceivePort receivePort = ReceivePort();
+
+  _dbIsolate = await FlutterIsolate.spawn(
+    _dbMain,
+    receivePort.sendPort,
+  );
+
+  _dbSendPort = await receivePort.first;
+}
+
+
+void _dbMain(SendPort callerSendPort) {
+
+  ReceivePort newIsolateReceivePort = ReceivePort();
+
+  callerSendPort.send(newIsolateReceivePort.sendPort);
+
+  newIsolateReceivePort.listen((dynamic message) {
+    print("db isolate got message: $message");
+    _dbOperation();
+  });
+}
+
+void _dbOperation() async {
+  print("db in an isolate");
+  try {
+    var databasesPath = await getDatabasesPath();
+    String path = join(databasesPath, 'demo.db');
+    Database database = await openDatabase(path, version: 1,
+        onCreate: (Database db, int version) async {
+          // When creating the db, create the table
+          await db.execute(
+              'CREATE TABLE Test (id INTEGER PRIMARY KEY, name TEXT, value INTEGER, num REAL)');
+        });
+
+    // Insert some records in a transaction
+    await database.transaction((txn) async {
+      int id1 = await txn.rawInsert(
+          'INSERT INTO Test(name, value, num) VALUES("some name", 1234, 456.789)');
+      print('inserted1: $id1');
+      int id2 = await txn.rawInsert(
+          'INSERT INTO Test(name, value, num) VALUES(?, ?, ?)',
+          ['another name', 12345678, 3.1416]);
+      print('inserted2: $id2');
+    });
+  } catch (error, stacktrace) {
+    print(error);
+    print(stacktrace);
+  }
+}
